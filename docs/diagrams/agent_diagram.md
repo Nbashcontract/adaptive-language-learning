@@ -2,23 +2,23 @@
 
 ```mermaid
 graph TB
-    subgraph "Уровень управления"
+    subgraph Management["Уровень управления"]
         Coord[Координатор<br/>run_batch_parallel.py]
         Handoff[HandoffManager<br/>Менеджер передачи задач]
     end
 
-    subgraph "Уровень поиска"
+    subgraph Search["Уровень поиска"]
         API[GitHub REST API]
     end
 
-    subgraph "Параллельные рабочие агенты (4 потока)"
+    subgraph Workers["Параллельные рабочие агенты (4 потока)"]
         W1[Worker-1]
         W2[Worker-2]
         W3[Worker-3]
         W4[Worker-4]
     end
 
-    subgraph "Агенты-парсеры (Фабрика парсеров)"
+    subgraph Parsers["Агенты-парсеры (Фабрика парсеров)"]
         PF[ParserFactory]
         P1[Python Parser]
         P2[JS/TS Parser]
@@ -26,23 +26,23 @@ graph TB
         P4[HTML/CSS Parser]
     end
 
-    subgraph "Агенты-анализаторы паттернов (Фабрика анализаторов)"
+    subgraph Analyzers["Агенты-анализаторы паттернов"]
         AF[AnalyzerFactory]
         A1[Singleton Analyzer]
         A2[Repository Analyzer]
     end
 
-    subgraph "Уровень агрегации"
-        Agg[Assessment Aggregator<br/>Агент-агрегатор]
+    subgraph Aggregation["Уровень агрегации"]
+        Agg[Assessment Aggregator]
     end
 
-    subgraph "Уровень хранения"
+    subgraph Storage["Уровень хранения"]
         Q[(Queue<br/>Очередь результатов)]
         DBW[DB Writer<br/>Агент-потребитель]
         DB[(SQLite Database)]
     end
 
-    subgraph "Уровень представления"
+    subgraph Presentation["Уровень представления"]
         GUI[GUI Agent<br/>gui_app.py]
     end
 
@@ -86,12 +86,11 @@ graph TB
 
     GUI --> DB
 
-    style Coord fill:#f96,stroke:#333,stroke-width:3px
-    style Handoff fill:#9cf,stroke:#333,stroke-width:2px
-    style W1 fill:#9f9,stroke:#333,stroke-width:2px
-    style W2 fill:#9f9,stroke:#333,stroke-width:2px
-    style W3 fill:#9f9,stroke:#333,stroke-width:2px
-    style W4 fill:#9f9,stroke:#333,stroke-width:2px
-    style Q fill:#ff9,stroke:#333,stroke-width:3px
-    style DBW fill:#9cf,stroke:#333,stroke-width:2px
-    style GUI fill:#f9f,stroke:#333,stroke-width:2px
+    style Management fill:#FFE0B2,stroke:#E65100,stroke-width:2px
+    style Search fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style Workers fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style Parsers fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px
+    style Analyzers fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+    style Aggregation fill:#FFF9C4,stroke:#F57F17,stroke-width:2px
+    style Storage fill:#E0F7FA,stroke:#00695C,stroke-width:2px
+    style Presentation fill:#FCE4EC,stroke:#AD1457,stroke-width:2px
