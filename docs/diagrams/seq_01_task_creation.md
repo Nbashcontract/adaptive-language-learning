@@ -1,1 +1,0 @@
-sequenceDiagram\n    participant User as Пользователь\n    participant Coord as Координатор\n    participant Handoff as HandoffManager\n    User->>Coord: Оценить репозиторий\n    Coord->>Handoff: create_task\n    Handoff->>Handoff: TaskEnvelope 1\n    Coord-->>User: Принято
