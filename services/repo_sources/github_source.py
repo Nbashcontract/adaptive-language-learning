@@ -1,4 +1,5 @@
 ﻿import time
+import random
 from playwright.sync_api import sync_playwright
 from .base_source import BaseRepoSource
 
@@ -57,7 +58,7 @@ class GitHubSource(BaseRepoSource):
                         all_repos.append(repo)
 
                 page_num += 1
-                time.sleep(1)
+                time.sleep(random.uniform(2, 4))
 
             except Exception as e:
                 print(f"    [GitHub] Ошибка: {e}")
@@ -91,11 +92,12 @@ class GitHubSource(BaseRepoSource):
                 desc_elem = block.query_selector('p')
                 description = desc_elem.inner_text().strip() if desc_elem else ''
 
+                # Усиленные селекторы для языка
                 lang_elem = block.query_selector('[itemprop="programmingLanguage"]') or \
                             block.query_selector('[data-testid="language-color"] + span') or \
-                            block.query_selector('.repo-language-color + span')
+                            block.query_selector('.repo-language-color + span') or \
+                            block.query_selector('span[itemprop="programmingLanguage"]')
                 
-                # ИСПРАВЛЕНИЕ: Теперь переменная language корректно присваивается
                 language = lang_elem.inner_text().strip() if lang_elem else 'Unknown'
 
                 stars_elem = block.query_selector('a[href$="/stargazers"] span')

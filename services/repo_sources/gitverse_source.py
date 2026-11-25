@@ -1,4 +1,4 @@
-import time
+﻿import time
 from playwright.sync_api import sync_playwright
 from .base_source import BaseRepoSource
 
@@ -46,6 +46,12 @@ class GitVerseSource(BaseRepoSource):
                 self.page.goto(url, wait_until='networkidle', timeout=30000)
                 time.sleep(2)
 
+                # ПРОВЕРКА НА ЗАЩИТУ / ЛИМИТЫ
+                page_text = self.page.inner_text('body').lower()
+                if 'лимит' in page_text or 'входа' in page_text or 'доступно после' in page_text:
+                    print(f"    [GitVerse] Обнаружена защита: превышен лимит запросов или требуется авторизация. Пропуск источника.")
+                    break
+
                 repos = self._extract_repos()
                 if not repos:
                     break
@@ -58,19 +64,19 @@ class GitVerseSource(BaseRepoSource):
                         all_repos.append(repo)
 
                 page_num += 1
-                time.sleep(1)
+                time.sleep(2)
 
             except Exception as e:
                 print(f"    [GitVerse] Ошибка: {e}")
                 break
 
-        print(f"    [GitVerse] Найдено: {len(all_repos)}")
+        print(f"    [GitVerse] Итог: найдено {len(all_repos)} проектов")
         return all_repos
 
     def _extract_repos(self):
         repos = []
         repo_blocks = self.page.query_selector_all(
-            '.repo-item, .repository, .search-result'
+            '.repo-item, .repository, .search-result, [class*="repo"], [class*="project"]'
         )
 
         for block in repo_blocks:

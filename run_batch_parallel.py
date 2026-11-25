@@ -11,28 +11,28 @@ from services.database import Database
 from services.repo_sources import RepoSourceFactory
 from models.entities import LanguageScore, TechCategory, LANGUAGE_CATEGORY
 
-MAX_REPOS_PER_QUERY = 5
+TARGET_NEW = 10
 NUM_WORKERS = 4
 
 QUERIES_BY_SOURCE = {
     'github': [
         "language:python topic:web-framework stars:>1000",
-        "language:javascript topic:react stars:>1000",
-        "language:typescript topic:vue stars:>500",
-        "language:java topic:spring-boot stars:>1000",
-        "language:go topic:api stars:>500",
+        "language:python topic:api stars:>500",
         "language:python topic:database stars:>500",
+        "language:python topic:machine-learning stars:>1000",
+        "language:python topic:data-science stars:>500",
+        "language:javascript topic:react stars:>1000",
+        "language:javascript topic:nodejs stars:>500",
+        "language:javascript topic:express stars:>500",
+        "language:typescript topic:vue stars:>500",
+        "language:typescript topic:angular stars:>500",
+        "language:java topic:spring-boot stars:>1000",
+        "language:java topic:rest-api stars:>500",
+        "language:go topic:api stars:>500",
+        "language:go topic:web stars:>500",
     ],
-    'gitlab': [
-        "python path:app",
-        "javascript path:src",
-        "java path:src/main",
-    ],
-    'gitverse': [
-        "python",
-        "javascript",
-        "java",
-    ],
+    'gitlab': [],
+    'gitverse': [],
 }
 
 stop_requested = False
@@ -45,39 +45,44 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
-def search_repos_from_sources(queries_by_source, max_per_query=5):
-    all_repos = []
-    seen_urls = set()
+def search_repos_from_sources(queries_by_source, target_new=10):
+    db = Database()
+    known_urls = db.get_all_known_urls()
+
+    new_repos = []
+    seen_urls = set(known_urls)
 
     for source_name, queries in queries_by_source.items():
+        if stop_requested or len(new_repos) >= target_new:
+            break
         print(f"\n[SEARCH] Источник: {source_name.upper()} (HTML-парсинг)")
-        print("-" * 70)
+        print(f"    Известно URL: {len(known_urls)}, Цель: {target_new} новых")
 
         source = RepoSourceFactory.create(source_name, headless=True)
         try:
             source.start()
-
             for i, query in enumerate(queries, 1):
-                if stop_requested:
+                if stop_requested or len(new_repos) >= target_new:
                     break
                 print(f"\n[{i}/{len(queries)}] Запрос: {query}")
-                repos = source.search_repositories(query, max_results=max_per_query)
+
+                repos = source.search_repositories(query, max_results=target_new * 5)
 
                 for repo in repos:
+                    if len(new_repos) >= target_new:
+                        break
                     if repo['url'] not in seen_urls:
                         seen_urls.add(repo['url'])
-                        all_repos.append(repo)
+                        new_repos.append(repo)
 
-                print(f"    Всего уникальных: {len(all_repos)}")
-
+                print(f"    Найдено новых: {len(new_repos)}/{target_new}")
                 if i < len(queries):
                     time.sleep(1)
-
         finally:
             source.stop()
 
-    print(f"\n[OK] Всего найдено: {len(all_repos)}")
-    return all_repos
+    print(f"\n[OK] Собрано новых проектов для анализа: {len(new_repos)}")
+    return new_repos, db
 
 
 def worker_agent(repo, worker_id, result_queue, temp_base):
@@ -87,31 +92,23 @@ def worker_agent(repo, worker_id, result_queue, temp_base):
 
     name = repo['name']
     url = repo['url']
-    
-    # ИСПРАВЛЕНИЕ 1: Если язык Unknown, ищем все основные языки
-    lang = repo['language']
-    if not lang or lang == 'Unknown':
-        langs = ['Python', 'JavaScript', 'Java', 'Go', 'TypeScript']
-    else:
-        langs = [lang]
+    langs = ['Python', 'JavaScript', 'Java', 'Go', 'TypeScript']
 
     temp_path = f"{temp_base}/worker_{worker_id}"
 
     try:
         print(f"  [Worker-{worker_id}] Анализ {repo['full_name']}...")
         git_client = GitClient(temp_path)
-        
-        # ИСПРАВЛЕНИЕ 2: Проверяем, успешно ли прошло клонирование
+
         local_path = git_client.clone_repository(url)
         if not local_path:
-            result_queue.put({'url': url, 'name': name, 'status': 'error', 'error': 'Git clone failed'})
-            print(f"  [Worker-{worker_id}] Ошибка клонирования (возможно, кириллица в пути): {name}")
+            result_queue.put({'url': url, 'name': name, 'status': 'error', 'error': 'clone_failed'})
+            print(f"  [Worker-{worker_id}] Ошибка клонирования: {name}")
             return
 
         scanner = RepositoryScanner(git_client)
         aggregator = AssessmentAggregator()
 
-        # Передаем локальный путь, а не URL
         metrics = scanner.scan_repository(local_path, langs)
 
         scores = []
@@ -132,66 +129,54 @@ def worker_agent(repo, worker_id, result_queue, temp_base):
         if scores:
             result = aggregator.aggregate(scores)
             result_queue.put({
-                'url': url,
-                'name': name,
-                'result': result,
-                'scores': scores,
+                'url': url, 'name': name,
+                'result': result, 'scores': scores,
                 'status': 'success'
             })
             print(f"  [Worker-{worker_id}] OK: {result.overall_score}%")
         else:
             result_queue.put({
-                'url': url,
-                'name': name,
+                'url': url, 'name': name,
                 'status': 'no_data'
             })
-            print(f"  [Worker-{worker_id}] Пропуск: нет данных")
+            print(f"  [Worker-{worker_id}] Отклонён: нет подходящих языков")
 
         git_client.cleanup_all()
 
     except Exception as e:
         result_queue.put({
-            'url': url,
-            'name': name,
-            'status': 'error',
-            'error': str(e)
+            'url': url, 'name': name,
+            'status': 'error', 'error': str(e)[:80]
         })
         print(f"  [Worker-{worker_id}] Ошибка: {str(e)[:60]}")
 
 
 def db_writer(result_queue, db, total_tasks):
     written = 0
-    skipped = 0
+    rejected = 0
     errors = 0
 
     print(f"\n[DB Writer] Ожидание результатов ({total_tasks} задач)...")
 
-    while written + skipped + errors < total_tasks:
+    while written + rejected + errors < total_tasks:
         try:
             item = result_queue.get(timeout=5)
 
             if item['status'] == 'success':
-                existing = db.get_all_projects()
-                already_exists = any(p[2] == item['url'] for p in existing)
-
-                if not already_exists:
-                    db.save_assessment(
-                        item['url'],
-                        item['name'],
-                        item['result'],
-                        item['scores']
-                    )
-                    written += 1
-                    print(f"  [DB Writer] Записано: {item['name']}")
-                else:
-                    skipped += 1
-                    print(f"  [DB Writer] Пропущено (дубликат): {item['name']}")
+                db.save_assessment(
+                    item['url'], item['name'],
+                    item['result'], item['scores']
+                )
+                written += 1
+                print(f"  [DB Writer] Записано: {item['name']}")
 
             elif item['status'] == 'no_data':
-                skipped += 1
-                print(f"  [DB Writer] Пропущено (нет данных): {item['name']}")
+                db.add_rejected(item['url'], 'no suitable languages')
+                rejected += 1
+                print(f"  [DB Writer] Отклонён (нет языков): {item['name']}")
 
             elif item['status'] == 'error':
+                db.add_rejected(item['url'], item.get('error', 'unknown'))
                 errors += 1
                 print(f"  [DB Writer] Ошибка: {item['name']}")
 
@@ -203,8 +188,8 @@ def db_writer(result_queue, db, total_tasks):
             print(f"  [DB Writer] Критическая ошибка: {e}")
             errors += 1
 
-    print(f"\n[DB Writer] Завершено: {written} записано, {skipped} пропущено, {errors} ошибок")
-    return written, skipped, errors
+    print(f"\n[DB Writer] Завершено: {written} записано, {rejected} отклонено, {errors} ошибок")
+    return written, rejected, errors
 
 
 def main():
@@ -213,19 +198,20 @@ def main():
     print("=" * 70)
     print("[START] ПАРАЛЛЕЛЬНЫЙ АНАЛИЗ ЧЕРЕЗ HTML-ПАРСИНГ")
     print("=" * 70)
+    print(f"Цель: собрать {TARGET_NEW} новых проектов")
     print(f"Источники: {', '.join(QUERIES_BY_SOURCE.keys())}")
     print(f"Рабочих агентов: {NUM_WORKERS}")
     print("=" * 70)
 
-    db = Database()
-
-    print("\n[SEARCH] ШАГ 1: Поиск репозиториев через браузер")
+    print("\n[SEARCH] ШАГ 1: Поиск новых репозиториев")
     print("-" * 70)
 
-    all_repos = search_repos_from_sources(QUERIES_BY_SOURCE, max_per_query=MAX_REPOS_PER_QUERY)
+    new_repos, db = search_repos_from_sources(QUERIES_BY_SOURCE, target_new=TARGET_NEW)
 
-    if not all_repos:
-        print("[DONE] Нет проектов для анализа")
+    if not new_repos:
+        print("[DONE] Новых проектов не найдено")
+        projects_count, rejected_count = db.get_stats()
+        print(f"[STATS] В базе: {projects_count} проектов, {rejected_count} отклонено")
         return
 
     print("\n[ANALYSIS] ШАГ 2: Параллельный анализ")
@@ -236,7 +222,7 @@ def main():
 
     db_writer_thread = Thread(
         target=db_writer,
-        args=(result_queue, db, len(all_repos)),
+        args=(result_queue, db, len(new_repos)),
         daemon=True
     )
     db_writer_thread.start()
@@ -245,16 +231,12 @@ def main():
 
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = []
-        for i, repo in enumerate(all_repos):
+        for i, repo in enumerate(new_repos):
             if stop_requested:
                 break
             worker_id = (i % NUM_WORKERS) + 1
             future = executor.submit(
-                worker_agent,
-                repo,
-                worker_id,
-                result_queue,
-                temp_base
+                worker_agent, repo, worker_id, result_queue, temp_base
             )
             futures.append(future)
 
@@ -262,7 +244,7 @@ def main():
             try:
                 future.result()
             except Exception as e:
-                print(f"  [ERROR] Ошибка в потоке: {e}")
+                print(f"  [ERROR] {e}")
 
     result_queue.join()
     db_writer_thread.join(timeout=10)
@@ -271,10 +253,12 @@ def main():
     print("[STATS] ИТОГОВАЯ СТАТИСТИКА")
     print("=" * 70)
 
+    projects_count, rejected_count = db.get_stats()
     projects = db.get_all_projects()
     langs = db.get_unique_languages()
 
-    print(f"[DB] Всего проектов: {len(projects)}")
+    print(f"[DB] Всего проектов: {projects_count}")
+    print(f"[DB] Отклонено: {rejected_count}")
     print(f"[LANG] Языков: {len(langs)}")
     print(f"[LANG] {', '.join(sorted(langs))}")
 
@@ -290,7 +274,7 @@ def main():
             shutil.rmtree(temp_path)
             print("\n[CLEANUP] Временные папки удалены")
         except Exception as e:
-            print(f"\n[WARNING] Не удалось удалить: {e}")
+            print(f"\n[WARNING] {e}")
 
     print("\n[DONE] Откройте gui_app.py")
     print("=" * 70)

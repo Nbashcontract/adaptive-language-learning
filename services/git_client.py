@@ -31,7 +31,7 @@ class GitClient:
                 )
         try:
             result = subprocess.run(
-                ['git', 'clone', '--depth', '1', repo_url, str(path)],
+                ['git', '-c', 'core.longpaths=true', 'clone', '--depth', '1', repo_url, str(path)],
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
