@@ -16,16 +16,22 @@ NUM_WORKERS = 4
 
 QUERIES_BY_SOURCE = {
     'github': [
-        "language:python stars:>10000",
-        "language:javascript stars:>10000",
+        "language:python topic:web-framework stars:>1000",
+        "language:javascript topic:react stars:>1000",
+        "language:typescript topic:vue stars:>500",
+        "language:java topic:spring-boot stars:>1000",
+        "language:go topic:api stars:>500",
+        "language:python topic:database stars:>500",
     ],
     'gitlab': [
-        "python",
-        "javascript",
+        "python path:app",
+        "javascript path:src",
+        "java path:src/main",
     ],
     'gitverse': [
         "python",
         "javascript",
+        "java",
     ],
 }
 
@@ -76,29 +82,43 @@ def search_repos_from_sources(queries_by_source, max_per_query=5):
 
 def worker_agent(repo, worker_id, result_queue, temp_base):
     global stop_requested
-
     if stop_requested:
         return
 
     name = repo['name']
     url = repo['url']
-    langs = [repo['language']] if repo['language'] else ['Python']
+    
+    # ИСПРАВЛЕНИЕ 1: Если язык Unknown, ищем все основные языки
+    lang = repo['language']
+    if not lang or lang == 'Unknown':
+        langs = ['Python', 'JavaScript', 'Java', 'Go', 'TypeScript']
+    else:
+        langs = [lang]
+
     temp_path = f"{temp_base}/worker_{worker_id}"
 
     try:
         print(f"  [Worker-{worker_id}] Анализ {repo['full_name']}...")
-
         git_client = GitClient(temp_path)
+        
+        # ИСПРАВЛЕНИЕ 2: Проверяем, успешно ли прошло клонирование
+        local_path = git_client.clone_repository(url)
+        if not local_path:
+            result_queue.put({'url': url, 'name': name, 'status': 'error', 'error': 'Git clone failed'})
+            print(f"  [Worker-{worker_id}] Ошибка клонирования (возможно, кириллица в пути): {name}")
+            return
+
         scanner = RepositoryScanner(git_client)
         aggregator = AssessmentAggregator()
 
-        metrics = scanner.scan_repository(url, langs)
+        # Передаем локальный путь, а не URL
+        metrics = scanner.scan_repository(local_path, langs)
 
         scores = []
-        for lang, m_list in metrics.items():
+        for lang_name, m_list in metrics.items():
             if not m_list:
                 continue
-            cat = LANGUAGE_CATEGORY.get(lang.lower(), TechCategory.ALGORITHM)
+            cat = LANGUAGE_CATEGORY.get(lang_name.lower(), TechCategory.ALGORITHM)
             avg_loc = sum(m.lines_of_code for m in m_list) / len(m_list)
             type_ratio = sum(1 for m in m_list if m.has_type_hints) / len(m_list)
             err_ratio = sum(1 for m in m_list if m.has_error_handling) / len(m_list)
@@ -107,7 +127,7 @@ def worker_agent(repo, worker_id, result_queue, temp_base):
                 type_ratio * 100 * 0.4 +
                 err_ratio * 100 * 0.3
             ))
-            scores.append(LanguageScore(language=lang, score=score, category=cat))
+            scores.append(LanguageScore(language=lang_name, score=score, category=cat))
 
         if scores:
             result = aggregator.aggregate(scores)
@@ -136,7 +156,7 @@ def worker_agent(repo, worker_id, result_queue, temp_base):
             'status': 'error',
             'error': str(e)
         })
-        print(f"  [Worker-{worker_id}] Ошибка: {str(e)[:50]}")
+        print(f"  [Worker-{worker_id}] Ошибка: {str(e)[:60]}")
 
 
 def db_writer(result_queue, db, total_tasks):
